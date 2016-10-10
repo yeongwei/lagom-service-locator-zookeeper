@@ -27,11 +27,12 @@ import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.data.Stat
 import org.scalatest.FunSpecLike
 import org.scalatest.BeforeAndAfterAll
+import org.apache.curator.framework.api.CuratorWatcher
 
 import scala.concurrent.duration.FiniteDuration
 
-object ZooKeeperApiSpec {
-  def name = "ZooKeeperApiSpec"
+trait BaseSpec {
+  def name: String
   def configuration = ConfigFactory.load(
     ConfigFactory.parseString(
       """
@@ -42,6 +43,28 @@ object ZooKeeperApiSpec {
         |    remote.netty.tcp.bind-port = 0
         |  }
         """.stripMargin)).withFallback(ConfigFactory.load())
+
+  def zooKeeperServer = new TestingServer(-1)
+  def zooKeeperServer(port: Int) = new TestingServer(port)
+  
+  def createWatcher(probe: TestProbe) = new Watcher {
+    override def process(we: WatchedEvent) = {
+      probe.send(probe.ref, we)
+    }
+  }
+  
+  def createCuratorWatcher(probe: TestProbe) = new CuratorWatcher {
+    override def process(we: WatchedEvent) = {
+      probe.send(probe.ref, we)
+    }
+  }
+  
+  def convertStringToBytes(input: String) = input.toCharArray().map { c => c.toByte }
+  def convertBytesToString(input: Array[Byte]) = input.map { b => b.toChar }.mkString("")
+}
+
+object ZooKeeperApiSpec extends BaseSpec {
+  def name = "ZooKeeperApiSpec"
 
   def localHostName = InetAddress.getLocalHost.getHostName
   def localPort = 2182
@@ -63,7 +86,7 @@ class ZooKeeperApiSpec
 
   override def beforeAll = {
     startTimestamp = System.currentTimeMillis()
-    server = new TestingServer(-1)
+    server = ZooKeeperApiSpec.zooKeeperServer
     server.start
     Thread.sleep(3000)
     info(s"zookeeperUrl: ${server.getConnectString}")
@@ -74,17 +97,9 @@ class ZooKeeperApiSpec
     system.terminate()
   }
 
-  private def createWatcher(probe: TestProbe) = new Watcher {
-    override def process(we: WatchedEvent) = {
-      probe.send(probe.ref, we)
-    }
-  }
-
-  private def convertStringToBytes(input: String) = input.toCharArray().map { c => c.toByte }
-
   describe("ZooKeeper") {
     it("should receive connected event") {
-      zooKeeper = new ZooKeeper(server.getConnectString, zooKeeperClientTimeout, createWatcher(testProbe))
+      zooKeeper = new ZooKeeper(server.getConnectString, zooKeeperClientTimeout, ZooKeeperApiSpec.createWatcher(testProbe))
       val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[WatchedEvent])
       info(s"WatchedEvent: $msg")
       info(s"SessionId: ${zooKeeper.getSessionId}")
@@ -98,7 +113,7 @@ class ZooKeeperApiSpec
     val path = "/testEphemeral"
 
     it("should not have path created and registers a watcher to the path") {
-      val stat = zooKeeper.exists(path, createWatcher(testProbe))
+      val stat = zooKeeper.exists(path, ZooKeeperApiSpec.createWatcher(testProbe))
       info(s"stat: ${stat}")
       assert(stat == null)
     }
@@ -106,7 +121,7 @@ class ZooKeeperApiSpec
     val sampleData = "some sample data"
 
     it("should create path and receive node create event") {
-      val realPath = zooKeeper.create(path, convertStringToBytes(sampleData), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+      val realPath = zooKeeper.create(path, ZooKeeperApiSpec.convertStringToBytes(sampleData), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
       info(s"realPath: ${realPath}")
       assert(realPath.equals(path))
 
@@ -116,20 +131,20 @@ class ZooKeeperApiSpec
     }
 
     it("should change data but no event") {
-      val stat = zooKeeper.setData(path, convertStringToBytes(sampleData), -1)
+      val stat = zooKeeper.setData(path, ZooKeeperApiSpec.convertStringToBytes(sampleData), -1)
       info(s"stat: ${stat}")
       assert(stat != null)
       testProbe.expectNoMsg()
     }
 
     it("should have path created and registers a watcher") {
-      val stat = zooKeeper.exists(path, createWatcher(testProbe))
+      val stat = zooKeeper.exists(path, ZooKeeperApiSpec.createWatcher(testProbe))
       info(s"stat: ${stat}")
       assert(stat != null)
     }
 
     it("should change data and data changed event produced") {
-      val stat = zooKeeper.setData(path, convertStringToBytes(sampleData), -1)
+      val stat = zooKeeper.setData(path, ZooKeeperApiSpec.convertStringToBytes(sampleData), -1)
       info(s"stat: ${stat}")
       assert(stat != null)
       val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[WatchedEvent])
@@ -138,12 +153,12 @@ class ZooKeeperApiSpec
     }
 
     it("should get exception when a child is created") {
-      val stat = zooKeeper.exists(path, createWatcher(testProbe))
+      val stat = zooKeeper.exists(path, ZooKeeperApiSpec.createWatcher(testProbe))
       info(s"stat: ${stat}")
       assert(stat != null)
 
       val ex = intercept[Exception] {
-        val realPath = zooKeeper.create(s"${path}/children1", convertStringToBytes("This is children1"),
+        val realPath = zooKeeper.create(s"${path}/children1", ZooKeeperApiSpec.convertStringToBytes("This is children1"),
           ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
       }
 
@@ -164,7 +179,7 @@ class ZooKeeperApiSpec
     val path = "/testPersistent"
 
     it("should not have path created and registers a watcher to the path") {
-      val stat = zooKeeper.exists(path, createWatcher(testProbe))
+      val stat = zooKeeper.exists(path, ZooKeeperApiSpec.createWatcher(testProbe))
       info(s"stat: ${stat}")
       assert(stat == null)
     }
@@ -172,7 +187,7 @@ class ZooKeeperApiSpec
     val sampleData = "some sample data"
 
     it("should create path and receive node create event") {
-      val realPath = zooKeeper.create(path, convertStringToBytes(sampleData), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+      val realPath = zooKeeper.create(path, ZooKeeperApiSpec.convertStringToBytes(sampleData), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
       info(s"realPath: ${realPath}")
       assert(realPath.equals(path))
 
@@ -185,11 +200,11 @@ class ZooKeeperApiSpec
     val childSampleData = "This is children1"
     
     it("should be able to create children and receive event") {
-      val stat = zooKeeper.getChildren(path, createWatcher(testProbe))
+      val stat = zooKeeper.getChildren(path, ZooKeeperApiSpec.createWatcher(testProbe))
       info(s"stat: ${stat}")
       assert(stat != null)
 
-      val realPath = zooKeeper.create(childPath, convertStringToBytes(childSampleData), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+      val realPath = zooKeeper.create(childPath, ZooKeeperApiSpec.convertStringToBytes(childSampleData), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
       info(s"realPath: ${realPath}")
       assert(realPath.equals(childPath))
       
@@ -205,6 +220,21 @@ class ZooKeeperApiSpec
       val data2 = data.map { b => b.toChar }.mkString("")
       info(data2)
       assert(childSampleData.equals(data2))
+    }
+    
+    val childChildPath = s"${childPath}/children2"
+    it("should be able to create children children and receive event") {
+      val stat = zooKeeper.getChildren(childPath, ZooKeeperApiSpec.createWatcher(testProbe)) // oversee?
+      info(s"stat: ${stat}")
+      assert(stat != null)
+      
+      val realPath = zooKeeper.create(childChildPath, ZooKeeperApiSpec.convertStringToBytes(childSampleData), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+      info(s"realPath: ${realPath}")
+      assert(realPath.equals(childChildPath))
+      
+      val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[WatchedEvent])
+      info(s"WatchedEvent: $msg")
+      assert(msg.getType == EventType.NodeChildrenChanged )
     }
   }
 }
