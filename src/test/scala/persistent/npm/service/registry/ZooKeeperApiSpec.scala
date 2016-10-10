@@ -30,8 +30,8 @@ import org.scalatest.BeforeAndAfterAll
 
 import scala.concurrent.duration.FiniteDuration
 
-object ServiceRegistrySpec {
-  def name = "ServiceRegistrySpec"
+object ZooKeeperApiSpec {
+  def name = "ZooKeeperApiSpec"
   def configuration = ConfigFactory.load(
     ConfigFactory.parseString(
       """
@@ -43,15 +43,15 @@ object ServiceRegistrySpec {
         |  }
         """.stripMargin)).withFallback(ConfigFactory.load())
 
-  def localZooKeeperHostName = InetAddress.getLocalHost.getHostName
-  def localZooKeeperPort = 2182
-  def zooKeeperUrl = s"${localZooKeeperHostName}:${localZooKeeperPort}"
+  def localHostName = InetAddress.getLocalHost.getHostName
+  def localPort = 2182
+  def getConnectUrl = s"${localHostName}:${localPort}"
 
   def getRandomPort = new ServerSocket(0).getLocalPort
 }
 
-class ServiceRegistrySpec
-    extends TestKit(ActorSystem(ServiceRegistrySpec.name, ServiceRegistrySpec.configuration))
+class ZooKeeperApiSpec
+    extends TestKit(ActorSystem(ZooKeeperApiSpec.name, ZooKeeperApiSpec.configuration))
     with FunSpecLike with BeforeAndAfterAll {
 
   private val testProbe = TestProbe()
