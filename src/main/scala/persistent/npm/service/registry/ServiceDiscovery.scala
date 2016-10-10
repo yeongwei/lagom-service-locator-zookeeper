@@ -7,7 +7,7 @@ import java.net.URI
 import org.apache.curator.x.discovery.UriSpec
 import org.apache.curator.x.discovery.ServiceInstance
 
-trait ServiceRegistry {
+trait ServiceDiscovery {
   private val timeoutInSeconds = 10
   private var zooKeeperServiceRegistry: ZooKeeperServiceRegistry = null
   private var serviceInstance: ServiceInstance[String] = null
