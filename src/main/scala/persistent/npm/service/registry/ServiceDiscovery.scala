@@ -56,11 +56,21 @@ trait ServiceDiscovery {
     registeredServices.asScala.forall { url => url.getHost.equals(serviceHostName) && url.getPort.equals(servicePort) }
   }
 
+  /**
+   * Handles all object creations needed to facilitate service discovery functionality with order as below,
+   * 1. Stores zooKeeperUrl, zkServicesPath
+   * 2. Create the zooKeeperRegistry instance
+   * 3. Register current Service
+   */
   def registerService(zkUrl: String, zkServicesPath: String,
                       serviceName: String, serviceId: String, serviceHostName: String, servicePort: Int): Unit = {
     geServiceRegistry(getZooKeeperUrl(zkUrl), getZooKeeperServicesPath(zkServicesPath))
-      .register(newServiceInstance(serviceName, serviceId, serviceHostName, servicePort))
+    zooKeeperServiceRegistry.start()
+    zooKeeperServiceRegistry.register(newServiceInstance(serviceName, serviceId, serviceHostName, servicePort))
   }
 
-  def unregisterService: Unit = zooKeeperServiceRegistry.unregister(serviceInstance)
+  def unregisterService: Unit = {
+    zooKeeperServiceRegistry.unregister(serviceInstance)
+    zooKeeperServiceRegistry.close()
+  }
 }
