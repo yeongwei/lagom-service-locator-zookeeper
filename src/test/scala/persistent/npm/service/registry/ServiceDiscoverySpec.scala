@@ -27,7 +27,6 @@ import org.apache.curator.framework.recipes.cache.TreeCache
 import persistent.npm.service.registry.{ ServiceDiscovery => NpiServiceDiscovery }
 import scala.concurrent.duration.FiniteDuration
 
-
 object MockService {
   def props(zkUrl: String, zkServicesPath: String, serviceName: String, serviceId: String, serviceHostName: String, servicePort: Int) =
     Props(new MockService(zkUrl, zkServicesPath, serviceName, serviceId, serviceHostName, servicePort))
@@ -37,7 +36,7 @@ class MockService(zkUrl: String, zkServicesPath: String, serviceName: String, se
     extends Actor with ActorLogging with NpiServiceDiscovery {
   override def preStart = registerService(zkUrl, zkServicesPath, serviceName, serviceId, serviceHostName, servicePort)
   override def postStop = unregisterService
-  
+
   def receive = {
     case x @ _ => log.info(s"x: ${x}")
   }
@@ -77,75 +76,127 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
 
     client = CuratorFrameworkFactory.newClient(zooKeeperServer.getConnectString, sessionTimeout, connectionTimeout, new RetryForever(retryInterval))
     client.start()
-    
-    cache = new TreeCache(client, zkServicesPath)    
-    cache.getListenable.addListener(listener)
   }
 
   override def afterAll = {
     system.terminate()
   }
 
-  describe("Service with ServiceDiscover") {
-    it("should get event after starting cache") {
+  describe("Service Registry emulation") {
+    it("should get event after initializing and starting cache") {
+      cache = new TreeCache(client, zkServicesPath)
+      cache.getListenable.addListener(listener)
       cache.start()
-      
+
       val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
       info(s"WatchedEvent: $msg")
-      assert(msg.getType == TreeCacheEvent.Type.INITIALIZED)
+      assert(msg.getType === TreeCacheEvent.Type.INITIALIZED)
+      assert(msg.getData === null)
     }
-    
-    it("should create the main service path") {
-      client.create().forPath(zkServicesPath) // This should be the job of ServiceRegistry ???
-      
-      val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-      info(s"WatchedEvent: $msg")
-      assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-    }
-    
+  }
+
+  describe("Services with Service Discovery capabilities") {
     val serviceName = "service1"
     val serviceId = "1"
-      
-    it("should register itself upon actor start") {      
-      server1 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, serviceName, serviceId,
-        InetAddress.getLocalHost.getHostName, 9009))
+    val serviceHostName = InetAddress.getLocalHost.getHostName
+    val servicePort = 9009
 
-      // serviceName
-      val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-      info(s"WatchedEvent: $msg")
-      assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-      info(s"path: ${msg.getData.getPath}")
-        
-      val allChildren = client.getChildren.forPath(zkServicesPath).asScala
-      info(s"allChildren: ${allChildren}")
-      val children = allChildren.filter { p => p.equals(serviceName) }
-      assert(children.size == 1)
-      
-      // serviceId
-      val msg2 = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-      info(s"WatchedEvent: msg2")
-      assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-      info(s"path: ${msg.getData.getPath}")
-      
-      val allChildren2 = client.getChildren.forPath(msg.getData.getPath).asScala
-      info(s"allChildren2: ${allChildren2}")
-      val children2 = allChildren2.filter { p => p.equals(serviceName) }
-      assert(children2.size == 0)
-      
-      val data = client.getData.forPath(msg.getData.getPath)
-      info(s"${data.map(b => b.toChar ).mkString("")}")
+    describe("Service that performs the first registration when zookeeper services path does not even exist") {     
+      it("should start the very first service") {
+        server1 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, serviceName, serviceId,
+          serviceHostName, servicePort))
+        assert(server1 != null)
+      }
+
+      it("should first receive node created event for services path") {
+        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
+        info(s"WatchedEvent: $msg")
+        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
+        assert(msg.getData.getPath.equals(zkServicesPath))
+      }
+
+      it("should followed by node created event for service name") {
+        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
+        info(s"WatchedEvent: $msg")
+        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
+        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}"))
+      }
+
+      it("should followed by node created event for service id") {
+        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
+        info(s"WatchedEvent: $msg")
+        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
+        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}/${serviceId}"))
+      }
+
+      it("should get data at service id level") {
+        val data = client.getData.forPath(s"${zkServicesPath}/${serviceName}/${serviceId}")
+        val dataStr = { data.map(b => b.toChar).mkString("") }
+        info(s"dataStr: ${dataStr}")
+        assert(dataStr.contains(serviceHostName))
+        assert(dataStr.contains(String.valueOf(servicePort)))
+      }
+
+      it("should unregsiter itself upon actor stop") {
+        system.stop(server1)
+        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
+        info(s"WatchedEvent: $msg")
+        assert(msg.getType == TreeCacheEvent.Type.NODE_REMOVED)
+
+        val allChildren = client.getChildren.forPath(s"${zkServicesPath}/${serviceName}").asScala
+        info(s"allChildren: ${allChildren}")
+        val children = allChildren.filter { p => p.equals(serviceName) }
+        assert(children.size == 0)
+      }
     }
-    
-    it("should unregsiter itself actor stop") {
-      system.stop(server1)
-      val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-      info(s"WatchedEvent: $msg")
-      assert(msg.getType == TreeCacheEvent.Type.NODE_REMOVED)
+
+    val serviceId2 = "2"
+    val servicePort2 = 9011
+    describe("Multiple services with Service discovery capabilities") {
+      it("should have no children under service name") {
+        assert(client.getChildren.forPath(s"${zkServicesPath}/${serviceName}").asScala.size == 0)
+      }
+            
+      it("should start service 1") {
+        server1 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, serviceName, serviceId,
+          serviceHostName, servicePort))
+        assert(server1 != null)
+      }
       
-      val allChildren = client.getChildren.forPath(s"${zkServicesPath}/${serviceName}").asScala
-      info(s"allChildren: ${allChildren}")
-      val children = allChildren.filter { p => p.equals(serviceName) }
-      assert(children.size == 0)
+      it("should receive node created event for server1 for service id level") {
+        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
+        info(s"WatchedEvent: $msg")
+        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
+        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}/${serviceId}"))
+      }
+      
+      it("should start service 2") {
+        server2 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, serviceName, serviceId2,
+          serviceHostName, servicePort2))
+        assert(server2 != null)
+      }
+      
+      ignore("should receive node created event for server1 for service id 2 level") {
+        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
+        info(s"WatchedEvent: $msg")
+        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
+        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}/${serviceId2}"))
+      }
+      
+      ignore("should store independent data on server id level") {
+        Thread.sleep(3000)
+        val data = client.getData.forPath(s"${zkServicesPath}/${serviceName}/${serviceId}")
+        val dataStr = { data.map(b => b.toChar).mkString("") }
+        info(s"dataStr: ${dataStr}")
+        assert(dataStr.contains(serviceHostName))
+        assert(dataStr.contains(String.valueOf(servicePort)))
+        
+//        val data2 = client.getData.forPath(s"${zkServicesPath}/${serviceName}/${serviceId2}")
+//        val dataStr2 = { data2.map(b => b.toChar).mkString("") }
+//        info(s"dataStr: ${dataStr2}")
+//        assert(dataStr2.contains(serviceHostName))
+//        assert(dataStr2.contains(String.valueOf(servicePort2)))
+      }
     }
   }
 }
