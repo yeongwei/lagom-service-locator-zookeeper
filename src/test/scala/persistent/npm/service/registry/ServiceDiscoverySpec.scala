@@ -13,6 +13,8 @@ import collection.JavaConverters._
 import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
+import java.text.SimpleDateFormat
+import java.util.Date
 
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.FunSpecLike
@@ -26,6 +28,7 @@ import org.apache.curator.framework.recipes.cache.TreeCache
 
 import persistent.npm.service.registry.{ ServiceDiscovery => NpiServiceDiscovery }
 import scala.concurrent.duration.FiniteDuration
+import scala.collection.mutable.ArrayBuffer
 
 object MockService {
   def props(zkUrl: String, zkServicesPath: String, serviceName: String, serviceId: String, serviceHostName: String, servicePort: Int) =
@@ -55,6 +58,7 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
   private val testProbe = TestProbe()
   private val zkServicesPath = "/services"
   private val counter = new AtomicInteger(0)
+  private val events = ArrayBuffer[TreeCacheEvent]()
 
   private var server1: ActorRef = _
   private var server2: ActorRef = _
@@ -62,12 +66,53 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
   private var client: CuratorFramework = _
   private var cache: TreeCache = _
 
+  private case class CacheEventRecord(path: String, event: TreeCacheEvent)
+  
   private def listener = new TreeCacheListener() {
     def childEvent(client: CuratorFramework, event: TreeCacheEvent) = {
-      info(s"event[${counter.incrementAndGet()}]: ${event}")
+      // info(s"event[${counter.incrementAndGet()}]: ${event}")
+      events.append(event)
       testProbe.send(testProbe.ref, event)
     }
   }
+  
+  private def assertForEvent(eventType: TreeCacheEvent.Type, path: String): TreeCacheEvent = {
+    val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
+    info(s"WatchedEvent: $msg")
+    assert(msg.getType === eventType)
+    if (path == null)
+      assert(msg.getData === null)
+    else
+      assert(msg.getData.getPath.equals(path))
+      
+    msg
+  }
+
+  private def getEvents = events.map { e =>
+    {
+      if (e.getData == null)
+        CacheEventRecord(null, e)
+      else
+        CacheEventRecord(e.getData.getPath, e)
+    }
+  }
+  
+  private def getEventsGroupedByPath =
+    getEvents.groupBy(rec => rec.path).map { case (path, cacheEventRecords) => path -> cacheEventRecords.map { r => r.event } }
+  
+  private def getSortedEventsGroupByPath = 
+    getEventsGroupedByPath.map { case (path, events) => path -> events.sortBy { e => if (e.getData == null) -1 else e.getData.getStat.getMtime } }
+
+  private def printEvents(allEvents: Map[String, ArrayBuffer[TreeCacheEvent]]) = {
+    val formatter = new SimpleDateFormat("HH:mm:ss:SSS")
+    allEvents.foreach {
+      case (path, events) =>
+        info(s"${path} ${events.map { e => s"${e.getType.name()}(${if (e.getData == null) -1 else s"Mtime: ${formatter.format(new Date(e.getData.getStat.getMtime))} Czxid: ${e.getData.getStat.getCzxid} Mzxid: ${e.getData.getStat.getMzxid}"} )" }.mkString("|")}")
+    }
+  } 
+  
+  private def getEventualEvents(allEvents: Map[String, ArrayBuffer[TreeCacheEvent]]) = 
+    allEvents.filter{ case (path, events) => path != null }.map{ case (path, events) => path -> events.sortBy { e => e.getData.getStat.getMtime }.reverse.head }
 
   override def beforeAll = {
     zooKeeperServer = CuratorFrameworkApiSpec.zooKeeperServer
@@ -80,6 +125,8 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
 
   override def afterAll = {
     system.terminate()
+    
+    getEvents.foreach { rec => info(s"${rec.path} ${rec.event.getType.name()}") }
   }
 
   describe("Service Registry emulation") {
@@ -87,11 +134,7 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
       cache = new TreeCache(client, zkServicesPath)
       cache.getListenable.addListener(listener)
       cache.start()
-
-      val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-      info(s"WatchedEvent: $msg")
-      assert(msg.getType === TreeCacheEvent.Type.INITIALIZED)
-      assert(msg.getData === null)
+      assertForEvent(TreeCacheEvent.Type.INITIALIZED, null)
     }
   }
 
@@ -101,7 +144,7 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
     val serviceHostName = InetAddress.getLocalHost.getHostName
     val servicePort = 9009
 
-    describe("Service that performs the first registration when zookeeper services path does not even exist") {     
+    describe("Service that performs the first registration when zookeeper services path does not even exist") {
       it("should start the very first service") {
         server1 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, serviceName, serviceId,
           serviceHostName, servicePort))
@@ -109,24 +152,15 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
       }
 
       it("should first receive node created event for services path") {
-        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-        info(s"WatchedEvent: $msg")
-        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-        assert(msg.getData.getPath.equals(zkServicesPath))
+        assertForEvent(TreeCacheEvent.Type.NODE_ADDED, zkServicesPath)
       }
 
       it("should followed by node created event for service name") {
-        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-        info(s"WatchedEvent: $msg")
-        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}"))
+        assertForEvent(TreeCacheEvent.Type.NODE_ADDED, s"${zkServicesPath}/${serviceName}")
       }
 
       it("should followed by node created event for service id") {
-        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-        info(s"WatchedEvent: $msg")
-        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}/${serviceId}"))
+        assertForEvent(TreeCacheEvent.Type.NODE_ADDED, s"${zkServicesPath}/${serviceName}/${serviceId}")
       }
 
       it("should get data at service id level") {
@@ -139,9 +173,7 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
 
       it("should unregsiter itself upon actor stop") {
         system.stop(server1)
-        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-        info(s"WatchedEvent: $msg")
-        assert(msg.getType == TreeCacheEvent.Type.NODE_REMOVED)
+        assertForEvent(TreeCacheEvent.Type.NODE_REMOVED, s"${zkServicesPath}/${serviceName}/${serviceId}")
 
         val allChildren = client.getChildren.forPath(s"${zkServicesPath}/${serviceName}").asScala
         info(s"allChildren: ${allChildren}")
@@ -154,48 +186,35 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
     val servicePort2 = 9011
     describe("Multiple services with Service discovery capabilities") {
       it("should have no children under service name") {
+        client.getChildren.forPath(s"${zkServicesPath}").asScala.foreach { p => info(p) }
         assert(client.getChildren.forPath(s"${zkServicesPath}/${serviceName}").asScala.size == 0)
       }
-            
+
       it("should start service 1") {
         server1 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, serviceName, serviceId,
           serviceHostName, servicePort))
         assert(server1 != null)
       }
-      
-      it("should receive node created event for server1 for service id level") {
-        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-        info(s"WatchedEvent: $msg")
-        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}/${serviceId}"))
-      }
-      
+
       it("should start service 2") {
         server2 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, serviceName, serviceId2,
           serviceHostName, servicePort2))
         assert(server2 != null)
       }
       
-      ignore("should receive node created event for server1 for service id 2 level") {
-        val msg = testProbe.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[TreeCacheEvent])
-        info(s"WatchedEvent: $msg")
-        assert(msg.getType == TreeCacheEvent.Type.NODE_ADDED)
-        assert(msg.getData.getPath.equals(s"${zkServicesPath}/${serviceName}/${serviceId2}"))
-      }
-      
-      ignore("should store independent data on server id level") {
-        Thread.sleep(3000)
-        val data = client.getData.forPath(s"${zkServicesPath}/${serviceName}/${serviceId}")
-        val dataStr = { data.map(b => b.toChar).mkString("") }
-        info(s"dataStr: ${dataStr}")
-        assert(dataStr.contains(serviceHostName))
-        assert(dataStr.contains(String.valueOf(servicePort)))
+      it("should evaluate the eventual states of service instance path") {
+        Thread.sleep(5000)
+        val eventualEvents = getEventualEvents(getSortedEventsGroupByPath)
+        assert(eventualEvents != null)
+        eventualEvents.foreach { case (path, event) => info(s"${path}")}
+
+        assert(eventualEvents.contains(s"${zkServicesPath}/${serviceName}/${serviceId}"))
+        val result = eventualEvents.get(s"${zkServicesPath}/${serviceName}/${serviceId}").get
+        assert(result.getType.equals(TreeCacheEvent.Type.NODE_ADDED))
         
-//        val data2 = client.getData.forPath(s"${zkServicesPath}/${serviceName}/${serviceId2}")
-//        val dataStr2 = { data2.map(b => b.toChar).mkString("") }
-//        info(s"dataStr: ${dataStr2}")
-//        assert(dataStr2.contains(serviceHostName))
-//        assert(dataStr2.contains(String.valueOf(servicePort2)))
+        assert(eventualEvents.contains(s"${zkServicesPath}/${serviceName}/${serviceId2}"))
+        val result2 = eventualEvents.get(s"${zkServicesPath}/${serviceName}/${serviceId2}").get
+        assert(result2.getType.equals(TreeCacheEvent.Type.NODE_ADDED))
       }
     }
   }
