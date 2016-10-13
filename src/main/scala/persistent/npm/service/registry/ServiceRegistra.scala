@@ -31,7 +31,7 @@ trait ServiceRegistra {
   }
 
   def registerService(serviceName: String, serviceId: String, serviceHostName: String, servicePort: Int): Unit =
-    if (_serviceInstance == null) {
+    if (_serviceInstance == null && _zooKeeperServiceRegistry != null) {
       _serviceInstance = newServiceInstance(serviceName, serviceId, serviceHostName, servicePort)
       _zooKeeperServiceRegistry.register(_serviceInstance)
     }

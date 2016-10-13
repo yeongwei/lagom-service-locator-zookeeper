@@ -30,26 +30,21 @@ import akka.testkit.TestKit
 import akka.testkit.TestProbe
 
 object MockService {
-  case class AskForService(serviceName: String, count: Int)
-
   def props(zkUrl: String, zkServicesPath: String, serviceName: String, serviceId: String, serviceHostName: String, servicePort: Int, registerService: Boolean) =
     Props(new MockService(zkUrl, zkServicesPath, serviceName, serviceId, serviceHostName, servicePort, registerService))
 }
 
 class MockService(zkUrl: String, zkServicesPath: String, serviceName: String, serviceId: String, serviceHostName: String, servicePort: Int, registerServiceRequired: Boolean)
-    extends Actor with ActorLogging with ServiceAware {
+    extends Actor with ActorLogging with ServiceRegistra {
+
   override def preStart = {
-    startServiceAware(zkUrl, zkServicesPath)
+    startServiceRegistra(zkUrl, zkServicesPath)
     if (registerServiceRequired)
       registerService(serviceName, serviceId, serviceHostName, servicePort)
   }
-  override def postStop = stopServiceAware
+  override def postStop = stopServiceRegistra
 
   def receive = {
-    case MockService.AskForService(serviceName, count) => {
-      def accumulate(count: Int, acc: Seq[String]): Seq[String] = if (count == 0) acc else accumulate(count - 1, acc :+ discoverService(serviceName).serviceInstance.getId)
-      sender ! accumulate(count, Seq[String]())
-    }
     case x @ _ => log.info(s"x: ${x}")
   }
 }
@@ -244,46 +239,6 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
         val allServices = client.getChildren.forPath(s"${zkServicesPath}").asScala
         info(s"allServices: ${allServices}")
         assert(allServices.size > 0)
-      }
-    }
-
-    val testProbe2 = TestProbe()
-    describe("Services with Service Aware capabilities for discovery") {
-      it("should be able to discover registered service in round robin fashion") {
-        server1.tell(MockService.AskForService("service1", 20), testProbe2.ref)
-        val msg = testProbe2.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[Seq[String]])
-        info(s"${msg}")
-        assert(msg.groupBy { s => s }.size == 2)
-      }
-      
-      it("should start new service but able to discover existing service") {
-        server3 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, zkServicesPath, "server3", "1",
-          "remoteHostName", 9011, false), "server3")
-        server3.tell(MockService.AskForService("service1", 20), testProbe2.ref)
-        val msg = testProbe2.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[Seq[String]])
-        info(s"${msg}")
-        assert(msg.groupBy { s => s }.size == 2)
-        
-        server3.tell(MockService.AskForService("service1", 1), testProbe2.ref)
-        val msg1 = testProbe2.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[Seq[String]])
-        info(s"${msg1}")
-        
-        server3.tell(MockService.AskForService("service1", 1), testProbe2.ref)
-        val msg2 = testProbe2.expectMsgClass(new FiniteDuration(10, TimeUnit.SECONDS), classOf[Seq[String]])
-        info(s"${msg2}")
-        assert(msg1.head != msg2.head)
-      }
-      
-      it("should stop gracefully") {
-        try {
-          system.stop(server3)
-          assert(true)
-        } catch {
-          case ex: Throwable => {
-            ex.printStackTrace()
-            assert(false)
-          }
-        }
       }
     }
   }
