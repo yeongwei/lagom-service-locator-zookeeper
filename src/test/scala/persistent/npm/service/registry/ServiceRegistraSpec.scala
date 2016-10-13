@@ -241,5 +241,13 @@ class ServiceDiscoverySpec extends TestKit(ActorSystem(ServiceDiscoverySpec.name
         assert(allServices.size > 0)
       }
     }
+    
+    describe("Access to service instance data") {
+      it("should be parsable") {
+        val data = client.getData.forPath(s"${zkServicesPath}/${serviceName}/${serviceId}")
+        val dataStr = { data.map(b => b.toChar).mkString("") }
+        info(s"dataStr: ${dataStr}")
+      }
+    }
   }
 }
