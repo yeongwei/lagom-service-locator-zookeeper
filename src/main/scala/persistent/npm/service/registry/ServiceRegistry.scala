@@ -195,7 +195,7 @@ class ServiceRegistry(zooKeeperUrl: String, servicesBasePath: String) extends Ac
    * 3. Directive location might need the = based on explanation at http://nginx.org/en/docs/http/ngx_http_core_module.html#location
    */
   private def reloadServiceGateway: Unit = {
-    // e.g. serviceName -> [serviceInstance]
+    // e.g. serviceName -> Available [serviceInstance]
     val serviceToInstances = ServiceRegistry.serviceMappings.map {
       case (serviceName, _) => serviceName ->
         _servicesState.filter { case (serviceInstancePath: String, _) => serviceInstancePath.contains(s"/${serviceName}/") }
@@ -210,11 +210,11 @@ class ServiceRegistry(zooKeeperUrl: String, servicesBasePath: String) extends Ac
      * 
      */
     val servers = new StringBuffer()
-    serviceToInstances.foreach {
-      case (serviceName, serviceInstances) => {
-        servers.append(s"""upstream ${serviceName} {\n""")
-        serviceInstances.foreach { case ServiceInfo(_, instance) => servers.append(s"""    server ${instance.address}:${instance.port};\n""") }
-        servers.append(s"}\n")
+    serviceToInstances.filter{ case (_, serviceInstances) => serviceInstances.size > 0 }
+      .foreach { case (serviceName, serviceInstances) => {
+         servers.append(s"""upstream ${serviceName} {\n""")
+         serviceInstances.foreach { case ServiceInfo(_, instance) => servers.append(s"""    server ${instance.address}:${instance.port};\n""") }
+         servers.append(s"}\n")
       }
     }
     log.info("npi-server.conf:\n{}", servers.toString())
@@ -225,11 +225,12 @@ class ServiceRegistry(zooKeeperUrl: String, servicesBasePath: String) extends Ac
 				}
      */
     val proxies = new StringBuffer()
-    serviceToInstances.foreach{ case (serviceName, serviceInstance) => {
-      ServiceRegistry.serviceMappings
-        .filter{ case (serviceName1, _) => serviceName1.equals(serviceName) }
-        .foreach{ case (serviceName2, uris) => uris.foreach { uri => 
-          proxies.append(s"""location ${uri} {\n""").append(s"""  proxy_pass http://${serviceName2};\n""").append(s"}\n") }}
+    serviceToInstances.filter{ case (_, serviceInstances) => serviceInstances.size > 0 }
+      .foreach{ case (serviceName, serviceInstance) => {
+        ServiceRegistry.serviceMappings
+          .filter{ case (serviceName1, _) => serviceName1.equals(serviceName) }
+          .foreach{ case (serviceName2, uris) => uris.foreach { uri => 
+            proxies.append(s"""location ${uri} {\n""").append(s"""  proxy_pass http://${serviceName2};\n""").append(s"}\n") }}
     } }
     /*
     ServiceRegistry.serviceMappings.map {
@@ -263,7 +264,7 @@ class ServiceRegistry(zooKeeperUrl: String, servicesBasePath: String) extends Ac
     writeToFile(npiProxyConf, proxies.toString())
 
     log.info("About to reload nginx")
-    val ret = (s"systemctl reload nginx.service").!!
+    val ret = (s"sudo systemctl reload nginx.service").!!
     log.info(s"${ret}")
   }
 
@@ -271,7 +272,8 @@ class ServiceRegistry(zooKeeperUrl: String, servicesBasePath: String) extends Ac
    * e.g. From /npi/services/threshold/1 to threshold
    */
   private def getServiceName(serviceInstancePath: String): String = serviceInstancePath.replace(s"${servicesBasePath}/", "").split("/").head
-
+  private def getRegisteredServices = _servicesState.map{ case (serviceInstancePath, _) => getServiceName(serviceInstancePath) }.toSeq.distinct
+  
   /**
    * If found serviceInstance then do nothing else add to map
    * @return true if added
