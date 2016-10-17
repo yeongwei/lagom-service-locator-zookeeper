@@ -64,26 +64,26 @@ class ServiceRegistrySpec extends TestKit(ActorSystem(ServiceRegistrySpec.name, 
       serviceRegistry = system.actorOf(ServiceRegistry.props(zooKeeperServer.getConnectString, servicesBasePath), "serviceRegistry1")
       
       server1 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, servicesBasePath,
-        "service1", "1", "server1", 7001, true), "server1")
+        "alpha", "1", "server1", 7001, true), "server1")
       server2 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, servicesBasePath,
-        "service1", "2", "server2", 7002, true), "server2")
+        "alpha", "2", "server2", 7002, true), "server2")
         
       server3 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, servicesBasePath,
-        "service2", "1", "server3", 8001, true), "server3")
+        "beta", "1", "server3", 8001, true), "server3")
       server4 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, servicesBasePath,
-        "service2", "2", "server4", 8001, true), "server4")
+        "beta", "2", "server4", 8002, true), "server4")
         
       server5 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, servicesBasePath,
-        "service3", "1", "server5", 9001, true), "server5")
+        "charlie", "1", "server5", 9001, true), "server5")
       server6 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, servicesBasePath,
-        "service3", "2", "server6", 9001, true), "server6")
+        "charlie", "2", "server6", 9002, true), "server6")
         
       Thread.sleep(30000)
       
       assert(true)
     }
     
-    it("should sync registered service") {
+    ignore("should sync registered service") {
       system.stop(serviceRegistry)
       Thread.sleep(10000)
       serviceRegistry = system.actorOf(ServiceRegistry.props(zooKeeperServer.getConnectString, servicesBasePath), "serviceRegistry2")

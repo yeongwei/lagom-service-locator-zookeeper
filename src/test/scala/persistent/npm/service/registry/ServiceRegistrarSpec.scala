@@ -35,14 +35,19 @@ object MockService {
 }
 
 class MockService(zkUrl: String, zkServicesPath: String, serviceName: String, serviceId: String, serviceHostName: String, servicePort: Int, registerServiceRequired: Boolean)
-    extends Actor with ActorLogging with ServiceRegistra {
+    extends Actor with ActorLogging with ServiceRegistrar {
 
   override def preStart = {
-    startServiceRegistra(zkUrl, zkServicesPath)
+    startServiceRegistrar(zkUrl, zkServicesPath)
     if (registerServiceRequired)
       registerService(serviceName, serviceId, serviceHostName, servicePort)
+      
+    log.info(s"zkUrl: ${zkUrl} zkServicesPath: ${zkServicesPath} serviceName: ${serviceName} serviceId: ${serviceId} serviceHostName: ${serviceHostName} servicePort: ${servicePort} registerServiceRequired: ${registerServiceRequired}")
   }
-  override def postStop = stopServiceRegistra
+  override def postStop = {
+    unregisterService
+    stopServiceRegistrar
+  }
 
   def receive = {
     case x @ _ => log.info(s"x: ${x}")

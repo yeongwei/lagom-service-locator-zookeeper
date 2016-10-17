@@ -4,14 +4,14 @@ import com.lightbend.lagom.discovery.zookeeper.ZooKeeperServiceRegistry
 import org.apache.curator.x.discovery.ServiceInstance
 import org.apache.curator.x.discovery.UriSpec
 
-trait ServiceRegistra {
+trait ServiceRegistrar {
   private var _serviceInstance: ServiceInstance[String] = null /*Service instance of the implementing service*/
   private var _zooKeeperUrl: String = null
   private var _servicesBasePath: String = null
 
   private var _zooKeeperServiceRegistry: ZooKeeperServiceRegistry = null
 
-  def startServiceRegistra(zooKeeperUrl: String, sericesBasePath: String): Unit = {
+  def startServiceRegistrar(zooKeeperUrl: String, sericesBasePath: String): Unit = {
     if (_zooKeeperUrl == null)
       _zooKeeperUrl = zooKeeperUrl
 
@@ -24,7 +24,7 @@ trait ServiceRegistra {
     }
   }
 
-  def stopServiceRegistra: Unit = {
+  def stopServiceRegistrar: Unit = {
     _zooKeeperServiceRegistry.close()
     _servicesBasePath = null
     _zooKeeperUrl = null

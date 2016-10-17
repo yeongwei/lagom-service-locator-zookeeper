@@ -87,15 +87,15 @@ protected trait NginxConfiguration {
   def npiProxyConf = s"${defaultDdirectory}/npi-proxy.conf"
 }
 
-object ServiceRegistry {
+object ServiceRegistry {  
   /**
    * e.g. npi-threshold -> [/services/thresholds/all, /services/threshold/get, ...]
    */
   def serviceMappings: ImmutableHashMap[String, ImmutableSeq[String]] =
     ImmutableHashMap[String, ImmutableSeq[String]](
-      "service1" -> ImmutableSeq("/service1/api1", "/service1/api2"),
-      "service2" -> ImmutableSeq("/service2/api1", "/service2/api2"),
-      "service3" -> ImmutableSeq("/service3/api1", "/service3/api2"))
+      "alpha" -> ImmutableSeq("/alpha/api1", "/alpha/api2"),
+      "beta" -> ImmutableSeq("/beta/api1", "/beta/api2"),
+      "charlie" -> ImmutableSeq("/charlie/api1", "/charlie/api2"))
 
   def props(zooKeeperUrl: String, servicesBasePath: String) = Props(new ServiceRegistry(zooKeeperUrl, servicesBasePath))
 }
@@ -225,6 +225,13 @@ class ServiceRegistry(zooKeeperUrl: String, servicesBasePath: String) extends Ac
 				}
      */
     val proxies = new StringBuffer()
+    serviceToInstances.foreach{ case (serviceName, serviceInstance) => {
+      ServiceRegistry.serviceMappings
+        .filter{ case (serviceName1, _) => serviceName1.equals(serviceName) }
+        .foreach{ case (serviceName2, uris) => uris.foreach { uri => 
+          proxies.append(s"""location ${uri} {\n""").append(s"""  proxy_pass http://${serviceName2};\n""").append(s"}\n") }}
+    } }
+    /*
     ServiceRegistry.serviceMappings.map {
       case (serviceName, uris) => {
         uris.foreach { uri =>
@@ -232,6 +239,7 @@ class ServiceRegistry(zooKeeperUrl: String, servicesBasePath: String) extends Ac
         }
       }
     }
+    */
     log.info("npi-proxy.conf:\n{}", proxies.toString())
 
     def backupIfExist(fullFileName: String): Unit = {
