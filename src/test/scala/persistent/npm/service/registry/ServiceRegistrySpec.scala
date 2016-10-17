@@ -61,7 +61,7 @@ class ServiceRegistrySpec extends TestKit(ActorSystem(ServiceRegistrySpec.name, 
 
   describe("Service Registry") {
     it("should receive events after services registered") {
-      serviceRegistry = system.actorOf(ServiceRegistry.props(zooKeeperServer.getConnectString, servicesBasePath))
+      serviceRegistry = system.actorOf(ServiceRegistry.props(zooKeeperServer.getConnectString, servicesBasePath), "serviceRegistry1")
       
       server1 = system.actorOf(MockService.props(zooKeeperServer.getConnectString, servicesBasePath,
         "service1", "1", "server1", 7001, true), "server1")
@@ -79,6 +79,16 @@ class ServiceRegistrySpec extends TestKit(ActorSystem(ServiceRegistrySpec.name, 
         "service3", "2", "server6", 9001, true), "server6")
         
       Thread.sleep(30000)
+      
+      assert(true)
+    }
+    
+    it("should sync registered service") {
+      system.stop(serviceRegistry)
+      Thread.sleep(10000)
+      serviceRegistry = system.actorOf(ServiceRegistry.props(zooKeeperServer.getConnectString, servicesBasePath), "serviceRegistry2")
+      Thread.sleep(10000)
+      assert(true)
     }
   }
 }
